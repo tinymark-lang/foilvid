@@ -1,4 +1,4 @@
-// api/generate.js
+// api/generate.js  -- replace entire file with this exact code
 import Replicate from "replicate";
 
 function setCorsHeaders(res, origin) {
@@ -10,22 +10,30 @@ function setCorsHeaders(res, origin) {
 
 export default async function handler(req, res) {
   const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
+
+  // ALWAYS set CORS headers (so OPTIONS responses include them)
   setCorsHeaders(res, ALLOWED_ORIGIN);
 
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  // optional token gate
   if (process.env.FRONTEND_TOKEN) {
     const token = req.headers["x-site-token"] || "";
-    if (token !== process.env.FRONTEND_TOKEN) return res.status(401).json({ error: "Unauthorized" });
+    if (token !== process.env.FRONTEND_TOKEN) {
+      return res.status(401).json({ error: "Unauthorized (bad site token)" });
+    }
   }
 
   const { prompt } = req.body || {};
-  if (!prompt || String(prompt).trim().length < 3) return res.status(400).json({ error: "Missing prompt" });
+  if (!prompt || String(prompt).trim().length < 3) {
+    return res.status(400).json({ error: "Missing or too-short prompt" });
+  }
 
   try {
     const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
