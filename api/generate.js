@@ -1,4 +1,4 @@
-// api/generate.js  -- replace entire file with this exact code
+// api/generate.js  — copy this entire file
 import Replicate from "replicate";
 
 function setCorsHeaders(res, origin) {
@@ -10,19 +10,13 @@ function setCorsHeaders(res, origin) {
 
 export default async function handler(req, res) {
   const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
-
-  // ALWAYS set CORS headers (so OPTIONS responses include them)
+  // ALWAYS put CORS headers on every response
   setCorsHeaders(res, ALLOWED_ORIGIN);
 
-  if (req.method === "OPTIONS") {
-    return res.status(204).end();
-  }
+  if (req.method === "OPTIONS") return res.status(204).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  // optional token gate
+  // token check (optional but recommended)
   if (process.env.FRONTEND_TOKEN) {
     const token = req.headers["x-site-token"] || "";
     if (token !== process.env.FRONTEND_TOKEN) {
