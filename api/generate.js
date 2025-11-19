@@ -1,44 +1,92 @@
-// api/generate.js
-import Replicate from "replicate";
+// api/generate.js  (Edge Function - copy entire file)
+export const config = { runtime: "edge" };
 
-function setCorsHeaders(res, origin) {
-  res.setHeader("Access-Control-Allow-Origin", origin || "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-site-token");
-  res.setHeader("Access-Control-Max-Age", "600");
+const ALLOWED = process.env.ALLOWED_ORIGIN || "*";
+const FRONTEND_TOKEN = process.env.FRONTEND_TOKEN || "";
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": ALLOWED,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, x-site-token",
+    "Access-Control-Max-Age": "600"
+  };
 }
 
-export default async function handler(req, res) {
-  const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
-  setCorsHeaders(res, ALLOWED_ORIGIN);
-
-  if (req.method === "OPTIONS") return res.status(204).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
-  if (process.env.FRONTEND_TOKEN) {
-    const token = req.headers["x-site-token"] || "";
-    if (token !== process.env.FRONTEND_TOKEN) return res.status(401).json({ error: "Unauthorized" });
+export default async function (req) {
+  // Return OPTIONS preflight early (Edge uses Request/Response)
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders() });
   }
 
-  const { prompt } = req.body || {};
-  if (!prompt || String(prompt).trim().length < 3) return res.status(400).json({ error: "Missing prompt" });
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: { "Content-Type": "application/json", ...corsHeaders() }
+    });
+  }
+
+  // small token gate
+  const token = req.headers.get("x-site-token") || "";
+  if (FRONTEND_TOKEN && token !== FRONTEND_TOKEN) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json", ...corsHeaders() }
+    });
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch (e) {
+    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json", ...corsHeaders() }
+    });
+  }
+
+  const prompt = (body?.prompt || "").toString().trim();
+  if (!prompt || prompt.length < 3) {
+    return new Response(JSON.stringify({ error: "Missing prompt" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json", ...corsHeaders() }
+    });
+  }
 
   try {
-    const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
-    const out = await replicate.run("minimax/video-01", {
-      input: { prompt: String(prompt).trim(), aspect_ratio: "16:9", motion_level: "medium" }
+    // Call Replicate via server-side fetch (Edge)
+    const REPLICATE_KEY = process.env.REPLICATE_API_TOKEN;
+    if (!REPLICATE_KEY) {
+      return new Response(JSON.stringify({ error: "Missing server token" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders() }
+      });
+    }
+
+    // Use Replicate REST API (works in Edge) — create a prediction
+    const resp = await fetch("https://api.replicate.com/v1/predictions", {
+      method: "POST",
+      headers: {
+        Authorization: `Token ${REPLICATE_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        // This payload works for many models — minimax/video-01 accepts this style
+        version: "minimax/video-01", // replicate may auto-resolve; adjust if needed
+        input: { prompt, aspect_ratio: "16:9", motion_level: "medium" }
+      })
     });
 
-    const url =
-      (typeof out?.url === "function" && out.url()) ||
-      (Array.isArray(out) && out[0]) ||
-      out?.output ||
-      out;
-
-    if (!url) return res.status(500).json({ error: "No video URL returned", raw: out });
-    return res.json({ url });
+    const j = await resp.json();
+    // The replicate response structure can vary; return the whole JSON for debugging
+    return new Response(JSON.stringify({ ok: true, job: j }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...corsHeaders() }
+    });
   } catch (err) {
-    console.error("Generation error:", err);
-    return res.status(500).json({ error: "Generation failed", details: String(err) });
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", ...corsHeaders() }
+    });
   }
 }
